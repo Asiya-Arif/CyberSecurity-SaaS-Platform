@@ -1,23 +1,32 @@
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.api import logs, incidents
+from app.storage.database import Base, engine
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="InsightGuard backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://your-app.vercel.app", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-```
 
----
+app.include_router(logs.router)
+app.include_router(incidents.router)
 
-### Step 2 — Deploy Backend to Railway
+# Mount frontend directory for static assets
+# Actually, since everything is in index.html, we just need to serve the file
+@app.get("/")
+def read_root():
+    return FileResponse("app/frontend/index.html")
 
-1. Push your repo to GitHub
-2. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub
-3. Add a **Postgres** plugin inside Railway
-4. Set these environment variables in Railway:
-   - `DATABASE_URL` → auto-filled by Railway's Postgres plugin
-   - `PORT` → `8000`
-5. Add a `Procfile` to your repo root:
-```
-   web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+@app.get("/dashboard")
+def read_dashboard():
+    return FileResponse("app/frontend/index.html")
