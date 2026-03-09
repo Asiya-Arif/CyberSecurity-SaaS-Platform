@@ -627,22 +627,8 @@
                 </div>
             </div>
 
-            <!-- Charts -->
-            <div class="charts-grid">
-                <div class="stat-card"><h3 style="font-size:0.8rem;">TRAFFIC ANALYSIS</h3><div class="chart-container"><canvas id="mainChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">RISK DISTRIBUTION</h3><div class="chart-container"><canvas id="riskChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">ATTACK VECTORS</h3><div class="chart-container"><canvas id="vectorChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">GEOGRAPHIC ORIGINS</h3><div class="chart-container"><canvas id="geoChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">PROTOCOL BREAKDOWN</h3><div class="chart-container"><canvas id="protocolChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">HOURLY THREAT DENSITY</h3><div class="chart-container"><canvas id="densityChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">TOP TARGETED ENDPOINTS</h3><div class="chart-container"><canvas id="endpointChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">USER AGENT ANALYSIS</h3><div class="chart-container"><canvas id="uaChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">RESPONSE CODE DISTRIBUTION</h3><div class="chart-container"><canvas id="responseChart"></canvas></div></div>
-                <div class="stat-card"><h3 style="font-size:0.8rem;">BANDWIDTH USAGE (MB/s)</h3><div class="chart-container"><canvas id="bandwidthChart"></canvas></div></div>
-            </div>
-
             <!-- Events Table -->
-            <div class="stat-card" style="margin-top:20px;">
+            <div class="stat-card" style="margin-bottom:20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
                     <h3 style="color:var(--neon-red); font-size:0.9rem;">DETAILED EVENT FORENSICS</h3>
                     <span id="table-count" style="font-family:'JetBrains Mono'; font-size:0.65rem; color:var(--text-low);"></span>
@@ -662,6 +648,20 @@
                         <tbody id="log-tbody"></tbody>
                     </table>
                 </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="charts-grid">
+                <div class="stat-card"><h3 style="font-size:0.8rem;">TRAFFIC ANALYSIS</h3><div class="chart-container"><canvas id="mainChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">RISK DISTRIBUTION</h3><div class="chart-container"><canvas id="riskChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">ATTACK VECTORS</h3><div class="chart-container"><canvas id="vectorChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">GEOGRAPHIC ORIGINS</h3><div class="chart-container"><canvas id="geoChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">PROTOCOL BREAKDOWN</h3><div class="chart-container"><canvas id="protocolChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">HOURLY THREAT DENSITY</h3><div class="chart-container"><canvas id="densityChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">TOP TARGETED ENDPOINTS</h3><div class="chart-container"><canvas id="endpointChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">USER AGENT ANALYSIS</h3><div class="chart-container"><canvas id="uaChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">RESPONSE CODE DISTRIBUTION</h3><div class="chart-container"><canvas id="responseChart"></canvas></div></div>
+                <div class="stat-card"><h3 style="font-size:0.8rem;">BANDWIDTH USAGE (MB/s)</h3><div class="chart-container"><canvas id="bandwidthChart"></canvas></div></div>
             </div>
         </div>
 
@@ -857,13 +857,53 @@ function processFile(file) {
 }
 
 function parseLines(lines) {
-    return lines.map(line => {
-        const csv = line.split(',');
-        if (csv.length >= 5) return { timestamp:csv[0]?.trim()||'', ip:csv[1]?.trim()||'N/A', method:csv[2]?.trim()||'GET', endpoint:csv[3]?.trim()||'/', status:csv[4]?.trim()||'200', severity:(csv[5]?.trim()||guessSev(csv[4]?.trim())).toUpperCase() };
+    // Optimize by allocating array directly and using manual loop instead of array methods
+    const len = lines.length;
+    let results = [];
+    const nowStr = new Date().toISOString().slice(0,19).replace('T',' ');
+    
+    for (let i = 0; i < len; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        
+        let ip='N/A', method='GET', endpoint='/', status='200', severity='LOW', timestamp='';
+        
+        if (line.includes(',')) {
+            const csv = line.split(',');
+            if (csv.length >= 5) {
+                timestamp = csv[0]?.trim() || '';
+                ip = csv[1]?.trim() || 'N/A';
+                method = csv[2]?.trim() || 'GET';
+                endpoint = csv[3]?.trim() || '/';
+                status = csv[4]?.trim() || '200';
+                severity = (csv[5]?.trim() || guessSev(status)).toUpperCase();
+                results.push({ timestamp, ip, method, endpoint, status, severity });
+                continue;
+            }
+        }
+        
         const p = line.trim().split(/\s+/);
-        if (p.length >= 5) return { timestamp:(p[0]+' '+p[1]), ip:p[2]||'N/A', method:p[3]||'GET', endpoint:p[4]||'/', status:p[5]||'200', severity:(p[6]||guessSev(p[5])).toUpperCase() };
-        return { timestamp:new Date().toISOString().slice(0,19).replace('T',' '), ip:'N/A', method:'EVENT', endpoint:line.slice(0,40), status:'INFO', severity:'LOW' };
-    });
+        if (p.length >= 5) {
+            timestamp = p[0] + ' ' + p[1];
+            ip = p[2] || 'N/A';
+            method = p[3] || 'GET';
+            endpoint = p[4] || '/';
+            status = p[5] || '200';
+            severity = (p[6] || guessSev(status)).toUpperCase();
+            results.push({ timestamp, ip, method, endpoint, status, severity });
+            continue;
+        }
+
+        results.push({ 
+            timestamp: nowStr, 
+            ip: 'N/A', 
+            method: 'EVENT', 
+            endpoint: line.slice(0,40), 
+            status: 'INFO', 
+            severity: 'LOW' 
+        });
+    }
+    return results;
 }
 
 function guessSev(s) {
@@ -945,13 +985,19 @@ function renderDashboard(rows) {
 
     // Table
     const tbody=document.getElementById('log-tbody');
-    tbody.innerHTML='';
-    rows.forEach(r=>{
-        const s=(r.severity||'LOW').toUpperCase();
+    // Instead of using costly innerHTML in a loop, build a large string
+    let htmlChunk = '';
+    // Only render the first 100 rows to DOM to save browser memory/CPU
+    const maxRender = Math.min(rows.length, 100);
+    
+    for(let i=0; i<maxRender; i++){
+        const r = rows[i];
+        const s = (r.severity||'LOW').toUpperCase();
         const cls=s==='CRITICAL'?'sev-critical':s==='HIGH'?'sev-high':s==='MEDIUM'?'sev-medium':'sev-low';
         const ipCol=(s==='CRITICAL'||s==='HIGH')?'color:var(--neon-red)':'';
-        tbody.innerHTML+=`<tr><td style="color:#555">${r.timestamp}</td><td style="${ipCol}">${r.ip}</td><td>${r.method}</td><td style="color:#999">${r.endpoint}</td><td>${r.status}</td><td><span class="sev-badge ${cls}">${s}</span></td></tr>`;
-    });
+        htmlChunk += `<tr><td style="color:#555">${r.timestamp}</td><td style="${ipCol}">${r.ip}</td><td>${r.method}</td><td style="color:#999">${r.endpoint}</td><td>${r.status}</td><td><span class="sev-badge ${cls}">${s}</span></td></tr>`;
+    }
+    tbody.innerHTML = htmlChunk;
     document.getElementById('table-count').textContent=`${rows.length.toLocaleString()} EVENTS${rows.length>25?' — SCROLL TO VIEW ALL':''}`;
 
     // Charts data
