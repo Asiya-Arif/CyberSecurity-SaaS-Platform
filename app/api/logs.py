@@ -109,16 +109,27 @@ def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
     if total == 0:
         return _empty_analytics()
 
-    _HTTP_METHODS = {'GET','POST','PUT','DELETE','HEAD','OPTIONS','PATCH','CONNECT','TRACE'}
+    _HTTP_METHODS = {'GET','POST','PUT','DELETE','HEAD','OPTIONS','PATCH','CONNECT','TRACE','SSH','FW','EVT'}
     _METHOD_RE = re.compile(r'\b(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH|CONNECT|TRACE)\b')
+    _ENDPOINT_FROM_RAW = re.compile(r'"(?:GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)\s+', re.I)
+    _PATH_IN_RAW = re.compile(r'(\s|")(/(?:[\w.\-%~]|%[0-9a-fA-F]{2})*(?:\?[^\s"]*)?)(?:\s|$)')
 
     def _get_method(ev) -> str:
         method = getattr(ev, 'method', None)
-        if method and str(method).upper() in _HTTP_METHODS:
-            return str(method).upper()
+        if method and str(method).strip():
+            mstr = str(method).strip().upper()
+            if mstr in _HTTP_METHODS:
+                return mstr
+            if mstr in ('SSH','FW','EVT'):
+                return mstr
         action = getattr(ev, 'action', None)
         if action:
             m = _METHOD_RE.search(str(action))
+            if m:
+                return m.group(1)
+        raw = getattr(ev, 'raw', None) or ''
+        if raw:
+            m = _METHOD_RE.search(raw)
             if m:
                 return m.group(1)
         src = (getattr(ev, 'source', None) or '').lower()
@@ -126,26 +137,59 @@ def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
             return 'SSH'
         if src == 'firewall':
             a = getattr(ev, 'action', None)
-            return a if a in ('ALLOW', 'BLOCK') else 'FW'
-        return '—'
+            return str(a) if a in ('ALLOW', 'BLOCK') else 'FW'
+        return 'N/A'
 
     def _get_endpoint(ev) -> str:
         resource = getattr(ev, 'resource', None)
-        if resource and len(str(resource)) < 200:
+        if resource and str(resource).strip():
             r = str(resource).strip()
-            if r.startswith('/') or r.startswith('http'):
-                return r
+            if len(r) < 200 and (r.startswith('/') or r.startswith('http') or ':' in r or len(r) > 2):
+                return r[:80]
         action = getattr(ev, 'action', None)
         if action:
             for p in str(action).split():
                 if p.startswith('/') or p.startswith('http'):
                     return p[:80]
+                if ':' in p and not p.startswith('http'):  # host:port
+                    return p[:60]
+        raw = getattr(ev, 'raw', None) or ''
+        if raw:
+            em = _ENDPOINT_FROM_RAW.search(raw)
+            if em:
+                return em.group(1)[:80]
+            pm = _PATH_IN_RAW.search(raw)
+            if pm:
+                return pm.group(2)[:80]
+            if len(raw) > 20 and not raw.startswith('{'):
+                return raw[:60] + ('…' if len(raw) > 60 else '')
         src = (getattr(ev, 'source', None) or '').lower()
         if src == 'ssh':
-            return 'SSH session'
+            return 'SSH auth'
         if src == 'firewall':
-            return resource or '—'
-        return '—'
+            return str(resource) if resource else 'FW rule'
+        return 'N/A'
+
+    def _get_status(ev) -> str:
+        sc = getattr(ev, 'status_code', None)
+        if sc and str(sc).strip():
+            s = str(sc).strip()
+            if s.isdigit() and 100 <= int(s) <= 599:
+                return s
+            if s in ('Accepted', 'Failed', 'ALLOW', 'BLOCK'):
+                return s
+        src = (getattr(ev, 'source', None) or '').lower()
+        action = getattr(ev, 'action', None)
+        if src == 'ssh' and action in ('Accepted', 'Failed'):
+            return str(action)
+        if src == 'firewall' and action in ('ALLOW', 'BLOCK'):
+            return str(action)
+        raw = getattr(ev, 'raw', None) or ''
+        if raw:
+            m = re.search(r'\b([1-5]\d{2})\b', raw)
+            if m:
+                return m.group(1)
+        return 'N/A'
 
     def _is_internal(ip: str) -> bool:
         if not ip or ip == 'N/A':
@@ -222,7 +266,7 @@ def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
     }
 
     ep_counter: Counter = Counter()
-    skip_values = {'ALLOW', 'BLOCK', 'Accepted', 'Failed', '—', ''}
+    skip_values = {'ALLOW', 'BLOCK', 'Accepted', 'Failed', '—', '', 'N/A'}
     for ev in all_events:
         ep = _get_endpoint(ev)
         if ep and ep not in skip_values and ep != 'SSH session' and ep != '—':
@@ -303,7 +347,7 @@ def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
             'ip': getattr(ev, 'ip', None) or 'N/A',
             'method': _get_method(ev),
             'endpoint': _get_endpoint(ev),
-            'status': getattr(ev, 'status_code', '—') if getattr(ev, 'status_code', None) and str(getattr(ev, 'status_code', '')).isdigit() else '—',
+            'status': _get_status(ev),
             'severity': (getattr(ev, 'severity', None) or 'LOW').upper(),
         }
         for ev in recent

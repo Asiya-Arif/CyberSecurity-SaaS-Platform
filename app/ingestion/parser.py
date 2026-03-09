@@ -12,7 +12,9 @@ _RE_ISO_TS   = re.compile(r'\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}')
 _RE_APACHE_TS = re.compile(r'\d{1,2}/[A-Za-z]{3}/\d{4}[:\s]\S+')
 _RE_STATUS   = re.compile(r'\b([1-5]\d{2})\b')
 _RE_METHOD   = re.compile(r'\b(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH|CONNECT|TRACE)\b')
-_RE_ENDPOINT = re.compile(r'((?:/[\w.\-/%?&=+#@!*()]*)+)')
+# Paths: /path, /path?q=..., http://host/path, and paths without leading slash
+_RE_ENDPOINT = re.compile(r'((?:https?://[^\s"]+)|(?:/(?:[\w.\-%~]|%[0-9a-fA-F]{2})*(?:\?[^\s"]*)?))')
+_RE_ENDPOINT_ALT = re.compile(r'"\s*(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)\s+', re.I)
 _RE_UA       = re.compile(r'"([^"]*(?:Mozilla|Chrome|Safari|Firefox|curl|python|bot|spider|wget|Go-http|okhttp|Apache|Java)[^"]*)"', re.IGNORECASE)
 _RE_BYTES    = re.compile(r'\b(\d{3,9})\b')
 
@@ -120,10 +122,14 @@ def parse_logs(raw_text: str) -> List[LogEvent]:
                 ip = m.group(1)
 
             severity = _severity_from_level(level)
+            # Ensure we have displayable action/resource for dashboard
+            action = f"Event {event_id}: {level}"
+            resource = task or (description[:80] if description else str(event_id))
             events.append(LogEvent(
                 timestamp=timestamp, source='security', event_type=str(event_id),
                 severity=severity, user=user, ip=ip,
-                action=level, resource=task or None, raw=json.dumps(row),
+                action=action, resource=resource, raw=json.dumps(row),
+                status_code=None, method='EVT',
             ))
         return events
 
@@ -137,24 +143,28 @@ def parse_logs(raw_text: str) -> List[LogEvent]:
         if line.startswith('{') and line.endswith('}'):
             try:
                 data = json.loads(line)
-                status = str(data.get('status', data.get('status_code', '')))
-                severity = data.get('level', data.get('severity', 'INFO')).upper()
+                status = str(data.get('status') or data.get('status_code') or data.get('http_status') or data.get('response_code') or data.get('code') or '')
+                severity = (data.get('level') or data.get('severity') or 'INFO').upper()
                 if status and status.isdigit():
                     severity = _severity_from_status(status)
+                path = (data.get('path') or data.get('uri') or data.get('endpoint') or
+                        data.get('url') or data.get('request_uri') or data.get('request_url') or data.get('request_path'))
+                method = data.get('method') or data.get('request_method') or data.get('http_method')
+                action = data.get('message') or data.get('action') or (f"{method or 'REQUEST'} {path}" if path else None) or str(data.get('event_type', 'event'))
                 events.append(LogEvent(
-                    timestamp=data.get('timestamp', 'unknown'),
+                    timestamp=data.get('timestamp') or data.get('time') or 'unknown',
                     source='application',
-                    event_type=data.get('level', 'info'),
+                    event_type=str(data.get('level') or data.get('event_type') or 'info'),
                     severity=severity,
-                    user=data.get('user'),
-                    ip=data.get('ip') or data.get('remote_addr'),
-                    action=data.get('message') or data.get('action'),
-                    resource=data.get('path') or data.get('uri') or data.get('endpoint'),
+                    user=data.get('user') or data.get('username'),
+                    ip=data.get('ip') or data.get('remote_addr') or data.get('client_ip') or data.get('source_ip'),
+                    action=action,
+                    resource=path,
                     raw=line,
                     status_code=status or None,
-                    user_agent=data.get('user_agent') or data.get('ua'),
-                    bytes_sent=int(data.get('bytes', 0)) or None,
-                    method=data.get('method'),
+                    user_agent=data.get('user_agent') or data.get('ua') or data.get('userAgent'),
+                    bytes_sent=int(data.get('bytes', 0)) or int(data.get('bytes_sent', 0)) or None,
+                    method=method,
                 ))
                 continue
             except Exception:
@@ -230,12 +240,16 @@ def parse_logs(raw_text: str) -> List[LogEvent]:
             ts   = ts_m.group(1) if ts_m else 'unknown'
             events.append(LogEvent(
                 timestamp=ts, source='ssh', event_type='authentication',
-                severity=severity, user=user, ip=ip, action=status_word, raw=line,
+                severity=severity, user=user, ip=ip, action=status_word,
+                resource='SSH auth', raw=line,
+                status_code=status_word, method='SSH',
             ))
             continue
 
         # ── Firewall logs ─────────────────────────────────────────────────────
         m = re.match(r'(\S+) (ALLOW|BLOCK) (\S+) (\S+) -> (\S+)', line)
+        if not m:
+            m = re.match(r'^(.+?)\s+(ALLOW|BLOCK)\s+(\S+)\s+(\S+)\s+->\s+(\S+)', line)
         if m:
             ts, action, proto, src, dst = m.groups()
             ip = src.split(':')[0]
@@ -243,6 +257,7 @@ def parse_logs(raw_text: str) -> List[LogEvent]:
             events.append(LogEvent(
                 timestamp=ts, source='firewall', event_type='network',
                 severity=severity, ip=ip, action=action, resource=dst, raw=line,
+                status_code=action, method='FW',
             ))
             continue
 
@@ -269,11 +284,15 @@ def parse_logs(raw_text: str) -> List[LogEvent]:
         if mm:
             method = mm.group(1)
 
-        # endpoint
+        # endpoint: try "METHOD /path" first, then generic path regex
         resource = None
-        em = _RE_ENDPOINT.search(line)
-        if em and len(em.group(1)) > 1:
-            resource = em.group(1)[:120]
+        em = _RE_ENDPOINT_ALT.search(line)
+        if em:
+            resource = (em.group(2) or '')[:120]
+        if not resource:
+            em = _RE_ENDPOINT.search(line)
+            if em and len(em.group(1)) > 1:
+                resource = em.group(1)[:120]
 
         # user agent
         ua = None
@@ -304,7 +323,13 @@ def parse_logs(raw_text: str) -> List[LogEvent]:
 
         source = _guess_source(line_lower)
 
-        action = line[:200]
+        # Build meaningful action for display (method + path when available)
+        if method and resource:
+            action = f'{method} {resource}'
+        elif method:
+            action = f'{method} {line[:80]}' if len(line) > 80 else line[:200]
+        else:
+            action = line[:200]
         if source == 'firewall':
             action = 'BLOCK' if ('block' in line_lower or 'deny' in line_lower) else 'ALLOW'
 
