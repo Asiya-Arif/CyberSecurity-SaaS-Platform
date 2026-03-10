@@ -341,7 +341,12 @@ def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
         return {'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}.get(s, 0)
 
     def _sort_key(e):
-        return (_severity_score(e), getattr(e, 'id', None) or getattr(e, 'timestamp', '') or '')
+        sort_id = getattr(e, 'id', None)
+        if sort_id is not None:
+            secondary = f"{sort_id:010d}"
+        else:
+            secondary = str(getattr(e, 'timestamp', '') or '')
+        return (_severity_score(e), secondary)
 
     # Show all data ordered by severity (high to low), then ID/timestamp DESC
     recent = sorted(all_events, key=_sort_key, reverse=True)
