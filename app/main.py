@@ -1,30 +1,34 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-
-from app.api import logs, incidents
+from fastapi.responses import FileResponse, JSONResponse
+from app.api import logs, incidents, chat
 from app.storage.database import Base, engine
 
 # Create tables (safe on first run; existing tables are left untouched)
 try:
     Base.metadata.create_all(bind=engine)
+    print("Database tables created/verified successfully.")
 except Exception as e:
-    print(f"Warning: Database creation skipped (Likely read-only environment): {e}")
+    print(f"Warning: Database creation skipped: {e}")
 
-# ── SQLite column migration (add new analytics columns to existing DBs) ────────
+# SQLite-only migration — skip on PostgreSQL
 def _migrate_sqlite():
-    """Add any missing columns to an existing log_events table so that uploads
-    after a schema extension don't fail with 'table has no column' errors."""
+    """Only runs if using SQLite (local dev). Skipped on PostgreSQL (Railway)."""
+    db_url = str(engine.url)
+    if "sqlite" not in db_url:
+        print("Skipping SQLite migration (non-SQLite database detected).")
+        return
+
     import sqlalchemy
     try:
         with engine.connect() as conn:
             existing = {row[1] for row in conn.execute(sqlalchemy.text("PRAGMA table_info(log_events)"))}
             new_cols = {
-                "status_code":  "VARCHAR",
-                "user_agent":   "TEXT",
-                "bytes_sent":   "INTEGER",
-                "method":       "VARCHAR",
+                "status_code": "VARCHAR",
+                "user_agent":  "TEXT",
+                "bytes_sent":  "INTEGER",
+                "method":      "VARCHAR",
             }
             for col, tipo in new_cols.items():
                 if col not in existing:
@@ -36,7 +40,6 @@ def _migrate_sqlite():
 
 _migrate_sqlite()
 
-
 app = FastAPI(title="ThreatMind backend")
 
 app.add_middleware(
@@ -46,19 +49,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.api import logs, incidents, chat
-
 # Mount routers
 app.include_router(logs.router)
 app.include_router(incidents.router)
 app.include_router(chat.router)
 
-# Mount frontend directory for static assets
-# Actually, since everything is in index.html, we just need to serve the file
+# Resolve frontend path relative to this file (works on Railway)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_PATH = os.path.join(BASE_DIR, "app", "frontend", "index.html")
+
+@app.get("/health")
+def health_check():
+    return JSONResponse({"status": "ok"})
+
 @app.get("/")
 def read_root():
-    return FileResponse("app/frontend/index.html")
+    if os.path.exists(FRONTEND_PATH):
+        return FileResponse(FRONTEND_PATH)
+    return JSONResponse({"status": "ThreatMind API is running"})
 
 @app.get("/dashboard")
 def read_dashboard():
-    return FileResponse("app/frontend/index.html")
+    if os.path.exists(FRONTEND_PATH):
+        return FileResponse(FRONTEND_PATH)
+    return JSONResponse({"error": "Dashboard not found"}, status_code=404)
