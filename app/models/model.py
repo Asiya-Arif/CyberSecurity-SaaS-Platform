@@ -30,3 +30,4 @@ class Incident(Base):
     severity = Column(String)
     source_ip = Column(String)
     description = Column(String)
+    timestamp = Column(String, nullable=True)

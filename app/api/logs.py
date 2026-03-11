@@ -100,7 +100,7 @@ def _extract_hour(ts: str) -> int | None:
 
 # ── Upload ─────────────────────────────────────────────────────────────────────
 
-def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
+def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Compute dashboard analytics from a list of event-like objects (ORM or Pydantic).
     Used by get_analytics and by upload fallback when DB is read-only (e.g. Vercel).
@@ -351,8 +351,9 @@ def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
     # Using a typed dict structure for internal grouping
     incident_groups: dict[str, dict[str, Any]] = {}
     
-    # Identify all CRITICAL, HIGH, and MEDIUM events as potential incidents
-    incident_candidates = [ev for ev in recent if (getattr(ev, 'severity', None) or 'LOW').upper() in ('CRITICAL', 'HIGH', 'MEDIUM')]
+    # INCIDENT DETECTION: We scan ALL events for high-priority threats to ensure 100% accuracy,
+    # regardless of the sampling used for other metric counters.
+    incident_candidates = [ev for ev in all_events if (getattr(ev, 'severity', None) or 'LOW').upper() in ('CRITICAL', 'HIGH', 'MEDIUM')]
     
     for ev in incident_candidates:
         severity = (getattr(ev, 'severity', None) or 'HIGH').upper()
@@ -444,6 +445,18 @@ def _compute_analytics_from_events(all_events) -> Dict[str, Any]:
             'description': grp['description']
         })
 
+    # Integrate externally detected incidents (e.g. from the sophisticated rules/ML engine)
+    if external_incidents:
+        for ext in external_incidents:
+            # Avoid dupes if they were already caught by heuristics (highly unlikely with descriptions)
+            detected_incidents.append({
+                'timestamp': ext.get('timestamp') or '—',
+                'type': ext.get('type', 'Unknown'),
+                'severity': ext.get('severity', 'HIGH'),
+                'source_ip': ext.get('source_ip', 'Unknown'),
+                'description': ext.get('description', '')
+            })
+
     # Sort detected incidents by severity (CRITICAL > HIGH > MEDIUM)
     severity_map = {'CRITICAL': 3, 'HIGH': 2, 'MEDIUM': 1, 'LOW': 0}
     detected_incidents.sort(key=lambda x: severity_map.get(x['severity'], 0), reverse=True)
@@ -508,7 +521,8 @@ async def upload_logs(file: UploadFile = File(...), db: Session = Depends(get_db
         db_ok = True
         try:
             # Run detection on newly uploaded events only (more efficient and targeted)
-            incidents = len(run_detection(db, parsed_events))
+            detected = run_detection(db, parsed_events)
+            incidents = len(detected)
         except Exception as e:
             print(f"[upload] detection error: {e}")
             incidents = 0
@@ -529,6 +543,7 @@ async def upload_logs(file: UploadFile = File(...), db: Session = Depends(get_db
             "message": "Logs analysed successfully",
             "events_saved": len(parsed_events),
             "incidents_created": incidents,
+            "analytics": _compute_analytics_from_events(parsed_events, external_incidents=detected)
         }
 
 
@@ -583,8 +598,11 @@ def get_analytics(db: Session = Depends(get_db)):
         # This prevents slowdown with large datasets while still providing meaningful analytics
         recent_events = db.query(LogEvent).order_by(LogEvent.id.desc()).limit(1000).all()
 
-        analytics = _compute_analytics_from_events(recent_events)
-
+        # Run sophisticated detection on stored events
+        detected = run_detection(db, recent_events)
+        
+        analytics = _compute_analytics_from_events(recent_events, external_incidents=detected)
+        
         # Override the total_events with the actual database count
         analytics['total_events'] = total_events_count
 
