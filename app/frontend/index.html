@@ -1701,28 +1701,41 @@
         // ============================================================
         // API CONFIGURATION & FAILOVER LOGIC
         // ============================================================
-        const RAILWAY_API = window.location.origin; // Assume Railway serves the UI
+        // Use relative paths for local dev and automatic failover in production
+        const RAILWAY_API = ''; 
         const VERCEL_API = 'https://threatmind-backup.vercel.app'; // Backup URL placeholder
 
         async function fetchWithFailover(endpoint, options = {}) {
             // Ensure endpoint starts with /
             if (!endpoint.startsWith('/')) endpoint = '/' + endpoint;
 
-            // 1. Try Primary (Railway)
+            // 1. Try Primary (Local/Railway)
             try {
+                // If endpoint is already relative, fetch will use current origin
                 const response = await fetch(`${RAILWAY_API}${endpoint}`, options);
                 if (response.ok) return response;
+                
+                // If response is not ok (e.g., 404, 500), try fallback if it's a critical error
+                if (response.status >= 500) {
+                    console.warn(`Primary API returned ${response.status} for ${endpoint}, trying Vercel...`);
+                } else {
+                    return response; // Return 4xx errors normally
+                }
             } catch (err) {
-                console.warn(`Railway API failed for ${endpoint}, trying Vercel...`);
+                console.warn(`Primary API connection failed for ${endpoint}, trying Vercel...`);
             }
 
             // 2. Try Backup (Vercel)
             try {
+                // Skip fallback if VERCEL_API is not configured or we are on localhost
+                if (!VERCEL_API || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    throw new Error("Primary API failed and no fallback available for local development.");
+                }
                 const response = await fetch(`${VERCEL_API}${endpoint}`, options);
                 if (response.ok) return response;
                 throw new Error(`Vercel fallback failed with status ${response.status}`);
             } catch (err) {
-                console.error(`All API endpoints failed for ${endpoint}`);
+                console.error(`All API endpoints failed for ${endpoint}: ${err.message}`);
                 throw err;
             }
         }
@@ -1829,7 +1842,7 @@
                         SUBSYSTEM_LOG // TRACE_LIVE
                     </div>
                     <div style="margin-top: auto;">
-                        <button class="oracle-btn" style="padding:4px 12px; font-size:0.6rem;" onclick="explainIncident('${escHtml(inc.type)}', '${escHtml(inc.severity)}', '${escHtml(inc.source_ip)}', '${escHtml(inc.description)}', '${escHtml(inc.oracle_response || '')}', '${escHtml(inc.timestamp || '')}', '${escHtml(inc.endpoint || '')}', '${escHtml(inc.method || '')}', '${escHtml(inc.status || '')}')">ORACLE EXPLAIN</button>
+                        <button class="oracle-btn" style="padding:4px 12px; font-size:0.6rem;" onclick="explainIncident('${escJs(inc.type)}', '${escJs(inc.severity)}', '${escJs(inc.source_ip)}', '${escJs(inc.description)}', '${escJs(inc.oracle_response || '')}', '${escJs(inc.timestamp || '')}', '${escJs(inc.endpoint || '')}', '${escJs(inc.method || '')}', '${escJs(inc.status || '')}')">ORACLE EXPLAIN</button>
                     </div>
                 </div>
                 
@@ -2233,6 +2246,10 @@ RESPONSE FORMAT RULES (follow strictly):
             return escSimple(s).replace(/\n/g, '<br>');
         }
 
+        function escJs(s) {
+            return String(s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+        }
+
 
         async function terminalType(el, html, speed = 2) {
             const temp = document.createElement('div');
@@ -2270,7 +2287,45 @@ RESPONSE FORMAT RULES (follow strictly):
             const overlay = document.getElementById('oracle-insight-overlay');
             const content = document.getElementById('oracle-insight-content');
 
+            if (!overlay || !content) {
+                console.error("Oracle overlay elements not found!");
+                return;
+            }
+
             overlay.style.display = 'flex';
+
+            // Function to render the analysis result
+            const renderResult = (reply) => {
+                content.innerHTML = `
+                    <div style="margin-bottom:25px; border-bottom:1px solid rgba(200,220,255,0.08); padding-bottom:15px;">
+                        <div style="font-family:'Space Grotesk'; font-size:1.1rem; font-weight:700; color:#fff; margin-bottom:5px; letter-spacing:1px;">
+                            ORACLE ANALYSIS: ${type.toUpperCase()}
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px; font-family:'JetBrains Mono'; font-size:0.72rem;">
+                            <span style="color:var(--text-low);">SOURCE_ORIGIN:</span>
+                            <span style="color:var(--cyber-blue); font-weight:700;">${ip}</span>
+                            <span style="color:rgba(255,255,255,0.1);">|</span>
+                            <span style="color:var(--text-low);">THREAT_LEVEL:</span>
+                            <span class="sev-badge ${severity === 'CRITICAL' ? 'sev-critical' : severity === 'HIGH' ? 'sev-high' : 'sev-medium'}">${severity}</span>
+                        </div>
+                    </div>
+                    <div class="oracle-analysis-block">${escHtml(reply).replace(/\[([A-Z_]+)\]/g, '<span style="color:#ffcc00; font-weight:700;">[$1]</span>').replace(/&gt;&gt;/g, '<span style="color:var(--neon-red); font-weight:700;">&gt;&gt;</span>')}</div>
+                    <div style="margin-top:30px; display:flex; justify-content:flex-end; gap:12px;">
+                        <button class="btn" onclick="closeOracleOverlay()" style="border-color:var(--neon-red); color:var(--neon-red); background:rgba(255,0,60,0.05);">DISMISS</button>
+                        <button class="btn" style="border-color:var(--cyber-blue); color:var(--cyber-blue); background:rgba(0,242,255,0.05);" 
+                            onclick="continueInChat('${escJs(type)}', '${escJs(severity)}', '${escJs(ip)}', \`${escJs(description)}\`, \`${escJs(reply)}\`)">
+                            CONTINUE IN CHAT →
+                        </button>
+                    </div>
+                `;
+            };
+
+            // If we already have a precomputed response (e.g. from demo data), use it
+            if (precomputed && precomputed.length > 10) {
+                renderResult(precomputed);
+                return;
+            }
+
             content.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:200px;">
                 <div class="logo-mark pulse-sync" style="width:40px; height:40px; margin-bottom:15px;">
                     <svg width="40" height="40" viewBox="0 0 32 32" fill="none">
@@ -2292,20 +2347,12 @@ RESPONSE FORMAT RULES (follow strictly):
 
                 const data = await res.json();
                 const reply = data.content?.[0]?.text || '[NULL_RESPONSE]';
-
-                content.innerHTML = `
-                    <div style="margin-bottom:25px; border-bottom:1px solid rgba(200,220,255,0.08); padding-bottom:15px;">
-                        <div style="font-family:'Space Grotesk'; font-size:1.1rem; font-weight:700; color:#fff; margin-bottom:5px; letter-spacing:1px;">
-                            ORACLE ANALYSIS: ${type.toUpperCase()}
-                        </div>
-                    </div>
-                    <div class="oracle-analysis-block" style="white-space: pre-wrap;">${escHtml(reply)}</div>
-                    <div style="margin-top:30px; display:flex; justify-content:flex-end; gap:12px;">
-                        <button class="btn" onclick="closeOracleOverlay()" style="border-color:var(--neon-red); color:var(--neon-red); background:rgba(255,0,60,0.05);">DISMISS</button>
-                    </div>
-                `;
+                renderResult(reply);
             } catch (err) {
-                content.innerHTML = `<div class="oracle-analysis-block error">[ERROR] Oracle failed: ${escHtml(err.message)}</div>`;
+                content.innerHTML = `<div class="oracle-analysis-block error">[ERROR] Oracle failed: ${escHtml(err.message)}</div>
+                <div style="margin-top:20px; text-align:right;">
+                    <button class="btn" onclick="closeOracleOverlay()">CLOSE</button>
+                </div>`;
             }
         }
 
