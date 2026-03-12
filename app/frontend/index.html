@@ -2313,9 +2313,10 @@ RESPONSE FORMAT RULES (follow strictly):
                     
                     <div class="oracle-analysis-block">
                         ${escHtml(reply)
-                            .replace(/\[([A-Z_]+)\]/g, '<div style="color:#ffcc00; font-weight:700; margin-top:15px; margin-bottom:8px;">[$1]</div>')
+                            .replace(/\[([A-Z_]+)\]/g, '<div style="color:#ffcc00; font-weight:700; margin-top:10px; margin-bottom:4px;">[$1]</div>')
                             .replace(/&gt;&gt;/g, '<span style="color:var(--neon-red); font-weight:700; margin-right:8px;">&gt;&gt;</span>')
-                            .replace(/\n/g, '<div style="margin-bottom:4px;"></div>')
+                            .replace(/\n\n/g, '<div style="margin-bottom:8px;"></div>')
+                            .replace(/\n/g, '<div style="margin-bottom:2px;"></div>')
                         }
                     </div>
 
