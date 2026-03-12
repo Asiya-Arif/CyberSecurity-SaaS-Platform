@@ -468,6 +468,7 @@ def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str
             'endpoint': _get_endpoint(ev),
             'status': _get_status(ev),
             'severity': (getattr(ev, 'severity', None) or 'LOW').upper(),
+            'raw': getattr(ev, 'raw', ''),
         }
         for ev in recent
     ]
