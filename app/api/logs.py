@@ -421,16 +421,22 @@ def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str
         
         if group_key not in incident_groups:
             incident_groups[group_key] = {
-                'timestamp': timestamp, # Keep the most recent timestamp (since sorted DESC)
                 'type': inc_type,
                 'severity': severity,
                 'source_ips': [source_ip],
                 'description': full_desc,
-                'raw_log': raw_log
+                'raw_log': raw_log,
+                'method': _get_method(ev),
+                'endpoint': _get_endpoint(ev),
+                'status': _get_status(ev),
+                'timestamp': timestamp # Keep the most recent timestamp
             }
         else:
             if source_ip not in incident_groups[group_key]['source_ips']:
                 incident_groups[group_key]['source_ips'].append(source_ip)
+            # Update timestamp to the most recent one in the group
+            if timestamp != '—' and (incident_groups[group_key]['timestamp'] == '—' or timestamp > incident_groups[group_key]['timestamp']):
+                incident_groups[group_key]['timestamp'] = timestamp
 
     # Flatten and format
     for grp in incident_groups.values():
@@ -445,7 +451,10 @@ def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str
             'severity': grp['severity'],
             'source_ip': ip_display,
             'description': grp['description'],
-            'oracle_response': grp.get('raw_log', '') # Pass raw log to help Oracle explain
+            'oracle_response': grp.get('raw_log', ''), # Pass raw log to help Oracle explain
+            'method': grp.get('method'),
+            'endpoint': grp.get('endpoint'),
+            'status': grp.get('status')
         })
 
     # Integrate externally detected incidents (e.g. from the sophisticated rules/ML engine)
@@ -457,7 +466,11 @@ def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str
                 'type': ext.get('type', 'Unknown'),
                 'severity': ext.get('severity', 'HIGH'),
                 'source_ip': ext.get('source_ip', 'Unknown'),
-                'description': ext.get('description', '')
+                'description': ext.get('description', ''),
+                'method': ext.get('method', 'N/A'),
+                'endpoint': ext.get('endpoint', 'N/A'),
+                'status': ext.get('status', 'N/A'),
+                'oracle_response': ext.get('raw_log', '')
             })
 
     # Sort detected incidents by severity (CRITICAL > HIGH > MEDIUM)
