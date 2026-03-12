@@ -375,6 +375,7 @@ def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str
         outcome = "SUSPECTED_BREACH" if str(status_code) == "200" else "BLOCKED_PROBE"
 
         # Heuristics for common attacks
+        raw_log = getattr(ev, 'raw', action_text)
         if is_web or 'sqli' in evt_type or 'sql' in full_text or 'union' in full_text or 'select' in full_text:
             if any(k in full_text for k in ['select', 'union', 'insert', 'drop', '--', '%27', "'"]):
                 inc_type = 'SQL Injection'
@@ -424,7 +425,8 @@ def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str
                 'type': inc_type,
                 'severity': severity,
                 'source_ips': [source_ip],
-                'description': full_desc
+                'description': full_desc,
+                'raw_log': raw_log
             }
         else:
             if source_ip not in incident_groups[group_key]['source_ips']:
@@ -442,7 +444,8 @@ def _compute_analytics_from_events(all_events, external_incidents: List[Dict[str
             'type': grp['type'],
             'severity': grp['severity'],
             'source_ip': ip_display,
-            'description': grp['description']
+            'description': grp['description'],
+            'oracle_response': grp.get('raw_log', '') # Pass raw log to help Oracle explain
         })
 
     # Integrate externally detected incidents (e.g. from the sophisticated rules/ML engine)

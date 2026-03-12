@@ -108,51 +108,63 @@ def run_detection(db: Session, events_to_analyze=None):
     # ========================================================================
 
     for log in logs:
-        ip = log.ip or "unknown"
+        # SAFEGUARDS: Handle missing or undefined fields
+        ip = getattr(log, 'ip', None) or "unknown"
+        source = (getattr(log, 'source', None) or "generic").lower()
+        action = getattr(log, 'action', None) or ""
+        severity = (getattr(log, 'severity', None) or "LOW").upper()
+        resource = getattr(log, 'resource', None) or ""
+        timestamp = getattr(log, 'timestamp', None)
+
         ip_event_count[ip] += 1
-        if log.timestamp:
-            ip_last_ts[ip] = log.timestamp
+        if timestamp:
+            ip_last_ts[ip] = timestamp
 
         # RULE 1: SSH Brute Force Detection
-        if log.source == "ssh" and log.action and "Failed" in log.action:
+        if source == "ssh" and "failed" in action.lower():
             ip_fail_count[ip] += 1
 
         # RULE 2: HTTP Brute Force Detection
-        if log.source in ["apache", "nginx", "security", "web"] and log.severity in ["HIGH", "CRITICAL"]:
+        if source in ["apache", "nginx", "security", "web", "application"] and severity in ["HIGH", "CRITICAL"]:
             ip_http_fails[ip] += 1
 
         # RULE 3: Port Scanning Detection
-        if log.source == "firewall" and log.action in ["BLOCK", "DENY"]:
-            if log.resource:
-                ip_ports[ip].add(log.resource)
+        if source == "firewall" and any(word in action.upper() for word in ["BLOCK", "DENY", "DROP"]):
+            if resource:
+                ip_ports[ip].add(resource)
 
         # RULE 4: Directory Traversal Detection (Immediate)
-        if log.action and ("../" in log.action or "/etc/passwd" in log.action or "c:\\windows" in log.action):
+        traversal_patterns = ["../", "/etc/passwd", "/etc/shadow", "c:\\windows", "..\\", "boot.ini"]
+        if any(pat in action.lower() or pat in resource.lower() for pat in traversal_patterns):
             rule = DETECTION_RULES["DIRECTORY_TRAVERSAL"]
             incident = Incident(
                 type="DIRECTORY_TRAVERSAL",
                 severity="CRITICAL",
                 source_ip=ip,
-                description=f"🚨 {rule['name']} | Rule: {rule['pattern']} | Method: {rule['category']} | Target: {log.action[:100]}",
-                timestamp=log.timestamp
+                description=f"🚨 {rule['name']} | Pattern: {rule['pattern']} | Target: {resource or action[:100]} | Detected via Signature",
+                timestamp=timestamp
             )
-            db.add(incident)
+            # Store raw log for Oracle analysis
+            setattr(incident, 'raw_log', getattr(log, 'raw', action))
+            if db: db.add(incident)
             created_incidents.append(incident)
 
         # RULE 5: SQL Injection Detection (Immediate)
-        if log.action:
-            sql_patterns = ["UNION SELECT", "OR 1=1", "'; DROP", "' OR '1'='1"]
-            if any(pattern.lower() in log.action.lower() for pattern in sql_patterns):
-                rule = DETECTION_RULES["SQL_INJECTION"]
-                incident = Incident(
-                    type="SQL_INJECTION",
-                    severity="CRITICAL",
-                    source_ip=ip,
-                    description=f"🚨 {rule['name']} | Rule: {rule['pattern']} | Method: {rule['category']} | Query: {log.action[:100]}",
-                    timestamp=log.timestamp
-                )
-                db.add(incident)
-                created_incidents.append(incident)
+        sql_patterns = ["union select", "or 1=1", "'; drop", "' or '1'='1", "information_schema", "sleep("]
+        full_log_text = f"{action} {resource}".lower()
+        if any(pattern in full_log_text for pattern in sql_patterns):
+            rule = DETECTION_RULES["SQL_INJECTION"]
+            incident = Incident(
+                type="SQL_INJECTION",
+                severity="CRITICAL",
+                source_ip=ip,
+                description=f"🚨 {rule['name']} | Pattern: {rule['pattern']} | Vector: {action[:100]} | Detected via Signature",
+                timestamp=timestamp
+            )
+            # Store raw log for Oracle analysis
+            setattr(incident, 'raw_log', getattr(log, 'raw', action))
+            if db: db.add(incident)
+            created_incidents.append(incident)
 
     # ========================================================================
     # PHASE 2: ADAPTIVE THRESHOLD ANALYSIS (Dataset-Responsive)
@@ -185,7 +197,9 @@ def run_detection(db: Session, events_to_analyze=None):
                         description=f"🚨 {rule['name']} | Adaptive Rule: ≥{adaptive_ssh_threshold} attempts (dataset: μ={avg_ssh_fails:.1f}, σ={std_ssh_fails:.1f}) | Detected: {count} attempts | Method: {rule['category']}",
                         timestamp=ip_last_ts.get(ip)
                     )
-                    db.add(incident)
+                    # For aggregate incidents, use a summary or the last seen raw log
+                    setattr(incident, 'raw_log', f"Aggregate SSH brute force: {count} attempts from {ip}")
+                    if db: db.add(incident)
                     created_incidents.append(incident)
 
         # RULE 2: HTTP Brute Force with Adaptive Threshold
@@ -350,7 +364,12 @@ def run_detection(db: Session, events_to_analyze=None):
                 db.add(incident)
                 created_incidents.append(incident)
     
-    db.commit()
+    if db:
+        try:
+            db.commit()
+        except Exception as e:
+            print(f"[detection] Database commit failed: {e}")
+            if db: db.rollback()
     
     # Return detailed incident information
     return [
@@ -360,7 +379,8 @@ def run_detection(db: Session, events_to_analyze=None):
             "severity": incident.severity,
             "source_ip": incident.source_ip,
             "description": incident.description,
-            "timestamp": incident.timestamp
+            "timestamp": incident.timestamp,
+            "oracle_response": getattr(incident, 'raw_log', '') # Pass raw log data to help Oracle explain
         }
         for incident in created_incidents
     ]
