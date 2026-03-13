@@ -2256,19 +2256,7 @@ RESPONSE FORMAT RULES (follow strictly):
             setTimeout(() => { out.scrollTop = out.scrollHeight; }, 30);
         }
 
-        async function fetchWithFailover(endpoint, options) {
-            try {
-                // Try Vercel /api prefix first
-                let res = await fetch('/api' + endpoint, options);
-                if (res.ok) return res;
-                console.warn('/api fetch returned non-ok status:', res.status);
-            } catch (e) {
-                console.warn('/api fetch failed, trying local direct path...', e);
-            }
-            
-            // Fallback to local direct path
-            return await fetch(endpoint, options);
-        }
+        // Removed duplicate fetchWithFailover to use the global routing logic
 
         async function sendChat() {
             const input = document.getElementById('chat-input');
