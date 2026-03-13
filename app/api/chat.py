@@ -12,10 +12,15 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 def get_groq_key():
     key = os.getenv("GROQ_API_KEY")
     if not key:
-        # Try loading from .env again just in case
+        print("GROQ_API_KEY not found in os.getenv, trying load_dotenv...")
         from dotenv import load_dotenv
         load_dotenv()
         key = os.getenv("GROQ_API_KEY")
+    
+    if key:
+        print(f"GROQ_API_KEY found: {key[:6]}...{key[-4:]}")
+    else:
+        print("GROQ_API_KEY is completely missing from environment and .env")
     return key
 
 class SimpleChatRequest(BaseModel):
@@ -34,10 +39,10 @@ async def handle_chat(request: SimpleChatRequest):
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY is missing. Please check your .env file or environment variables.")
 
-    system_prompt = "You are a cybersecurity AI assistant helping users understand attacks, logs, vulnerabilities, and suspicious activity."
+    system_prompt = "You are ORACLE, an elite cybersecurity assistant. Explain everything simply so even non-experts can understand. Use '>>' for list items and actionable steps."
     
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "llama-3.1-8b-instant",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": request.message}
@@ -82,17 +87,16 @@ async def handle_oracle(request: OracleRequest):
         raise HTTPException(status_code=500, detail="GROQ_API_KEY is missing. Please check your .env file or environment variables.")
 
     system_prompt = (
-        "You are the ThreatMind ORACLE TERMINAL. You provide elite-level security incident analysis. "
-        "Every response MUST follow this exact format:\n\n"
+        "You are ORACLE. Analyze incidents simply and clearly for non-experts. Use the format:\n\n"
         "Incident Type: <type>\n"
         "Severity: <severity>\n"
-        "Explanation: <easy to understand explanation>\n"
-        "Possible Cause: <what might have caused it>\n"
-        "Recommended Fix: <actionable fix>"
+        "Explanation: <clear, simple explanation>\n"
+        "Possible Cause: <cause>\n"
+        "Recommended Fix: <actionable steps starting with >> >"
     )
     
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "llama-3.1-8b-instant",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Analyze this incident: {request.incident}"}

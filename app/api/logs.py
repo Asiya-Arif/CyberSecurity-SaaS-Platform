@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.storage.database import get_db
 from app.models.model import LogEvent
 from app.detection.rules import run_detection
+from app.detection.ai_detection import run_ai_detection
 from app.ingestion.parser import parse_logs
 
 router = APIRouter(prefix="/logs", tags=["Logs"])
@@ -683,23 +684,40 @@ async def upload_logs(file: UploadFile = File(...), db: Session = Depends(get_db
         db_ok = True
         
         try:
-            # Run detection on newly uploaded events only
-            detected = run_detection(db, parsed_events)
-            incidents = len(detected)
+            # Run Heuristic Detection
+            heuristic_incidents = run_detection(db, parsed_events)
+            
+            # Run AI-Enhanced Detection
+            try:
+                ai_incidents = await run_ai_detection(db, parsed_events)
+                all_incidents = heuristic_incidents + ai_incidents
+            except Exception as ai_err:
+                print(f"[upload] AI Detection failed: {ai_err}")
+                all_incidents = heuristic_incidents
+                
+            incidents = len(all_incidents)
         except Exception as e:
             print(f"[upload] detection error: {e}")
-            detected = []
+            all_incidents = []
             incidents = 0
             
     except Exception as e:
         print(f"[upload] database write unavailable (read-only?): {e}")
         db.rollback()
         # Fallback: compute analytics in-memory for serverless/read-only environments
-        analytics = _compute_analytics_from_events(parsed_events)
+        heuristic_incidents = run_detection(db, parsed_events) 
+        try:
+            ai_incidents = await run_ai_detection(db, parsed_events)
+            all_incidents = heuristic_incidents + ai_incidents
+        except Exception as ai_err:
+            print(f"[upload] AI Detection fallback failed: {ai_err}")
+            all_incidents = heuristic_incidents
+
+        analytics = _compute_analytics_from_events(parsed_events, external_incidents=all_incidents)
         return {
             "message": "Logs analysed successfully (In-Memory Fallback)",
             "events_saved": len(parsed_events),
-            "incidents_created": 0,
+            "incidents_created": len(all_incidents),
             "analytics": analytics,
         }
 
@@ -707,7 +725,7 @@ async def upload_logs(file: UploadFile = File(...), db: Session = Depends(get_db
         "message": "Logs analysed successfully",
         "events_saved": len(parsed_events),
         "incidents_created": incidents,
-        "analytics": _compute_analytics_from_events(parsed_events, external_incidents=detected)
+        "analytics": _compute_analytics_from_events(parsed_events, external_incidents=all_incidents)
     }
 
 
