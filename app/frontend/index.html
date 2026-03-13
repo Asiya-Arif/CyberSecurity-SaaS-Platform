@@ -1480,7 +1480,7 @@
                         <span id="table-count"
                             style="font-family:'JetBrains Mono'; font-size:0.75rem; color:var(--cyber-blue); font-weight:700; letter-spacing:1px;"></span>
                     </div>
-                    <div class="table-outer">
+                    <div class="table-outer" id="forensics-table-container">
                         <table>
                             <thead>
                                 <tr>
@@ -1910,14 +1910,47 @@
                 incidentEl.innerHTML = incHtml;
             }
 
-            // Forensics table
-            const rows = (data.forensics_table || []).slice(0, 300);
+            // Set up Virtual Chunk Rendering for the Forensics table
+            window.allForensicLogs = data.forensics_table || [];
+            window.logsLoadedCount = 0;
+            document.getElementById('log-tbody').innerHTML = '';
+            document.getElementById('table-count').textContent = `${data.total_events.toLocaleString()} EVENTS`;
+            
+            // Render first chunk immediately
+            renderLogChunk(150);
+
+            // Infinite Scroll Listener
+            const tableContainer = document.getElementById('forensics-table-container');
+            if (tableContainer) {
+                // Remove old event listener if exists (by replacing the clone)
+                const newTableContainer = tableContainer.cloneNode(true);
+                tableContainer.parentNode.replaceChild(newTableContainer, tableContainer);
+                
+                newTableContainer.addEventListener('scroll', function() {
+                    // Trigger chunk load when user scrolls within 200px of bottom
+                    if (this.scrollTop + this.clientHeight >= this.scrollHeight - 200) {
+                        renderLogChunk(150);
+                    }
+                });
+            }
+
+            // Build all 10 charts
+            buildChartsFromAPI(data);
+        }
+
+        // ── Virtual Chunk Rendering ───────────────────────────────────────────────────
+        function renderLogChunk(chunkSize) {
+            if (!window.allForensicLogs || window.logsLoadedCount >= window.allForensicLogs.length) return;
+            
+            const startIndex = window.logsLoadedCount;
+            const endIndex = Math.min(startIndex + chunkSize, window.allForensicLogs.length);
+            const chunk = window.allForensicLogs.slice(startIndex, endIndex);
+            
             let htmlChunk = '';
-            for (const r of rows) {
+            for (const r of chunk) {
                 const s = (r.severity || 'LOW').toUpperCase();
                 const cls = s === 'CRITICAL' ? 'sev-critical' : s === 'HIGH' ? 'sev-high' : s === 'MEDIUM' ? 'sev-medium' : 'sev-low';
                 const ipCol = (s === 'CRITICAL' || s === 'HIGH') ? 'color:var(--neon-red)' : '';
-                const rawLog = r.raw || `Log event: ${r.method} ${r.endpoint} ${r.status}`;
                 htmlChunk += `<tr>
             <td style="color:#555; padding:12px;">${escHtml(r.timestamp || '')}</td>
             <td style="${ipCol}; padding:12px;">${escHtml(r.ip || 'N/A')}</td>
@@ -1927,11 +1960,9 @@
             <td style="text-align:right; padding:12px;"><span class="sev-badge ${cls}">${s}</span></td>
         </tr>`;
             }
-            document.getElementById('log-tbody').innerHTML = htmlChunk;
-            document.getElementById('table-count').textContent = `${data.total_events.toLocaleString()} EVENTS`;
-
-            // Build all 10 charts
-            buildChartsFromAPI(data);
+            
+            document.getElementById('log-tbody').insertAdjacentHTML('beforeend', htmlChunk);
+            window.logsLoadedCount = endIndex;
         }
 
         // ── Build charts from API data ────────────────────────────────────────────────
@@ -2398,10 +2429,17 @@ RESPONSE FORMAT RULES (follow strictly):
                 `;
             };
 
-            // If we already have a precomputed response (e.g. from demo data), use it
+            // If we already have a precomputed response (e.g. from demo data), use it ONLY if it's actually an analysis.
+            // Uploaded logs pass the raw JSON here, so we want to query the AI instead of printing raw logs.
+            let rawLogContext = '';
             if (precomputed && precomputed.length > 10) {
-                renderResult(precomputed);
-                return;
+                if (precomputed.includes('[ANALYSIS]')) {
+                    renderResult(precomputed);
+                    return;
+                } else {
+                    // It's raw log data from the backend, append it for context
+                    rawLogContext = `\nRaw Evidence: ${precomputed}`;
+                }
             }
 
             content.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:200px;">
@@ -2414,7 +2452,7 @@ RESPONSE FORMAT RULES (follow strictly):
                 <div style="color:var(--cyber-blue); font-size:0.75rem; letter-spacing:2px; animation:blink-dot 1s infinite;">GROQ_LLAMA3_PROCESSING...</div>
             </div>`;
 
-            const incidentSummary = `Type: ${type}, Severity: ${severity}, IP: ${ip}, Endpoint: ${endpoint}, Method: ${method}, Status: ${status}, Description: ${description}`;
+            const incidentSummary = `Type: ${type}, Severity: ${severity}, IP: ${ip}, Endpoint: ${endpoint}, Method: ${method}, Status: ${status}, Description: ${description}${rawLogContext}`;
 
             try {
                 const res = await fetchWithFailover('/oracle', {
