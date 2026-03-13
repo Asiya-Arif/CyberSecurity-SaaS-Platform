@@ -1755,43 +1755,15 @@
         // ============================================================
         // API CONFIGURATION & FAILOVER LOGIC
         // ============================================================
-        // Use relative paths for local dev and automatic failover in production
+        // Use relative paths — works on both Railway and localhost (same-origin)
         const RAILWAY_API = '';
-        const VERCEL_API = 'https://threatmind-backup.vercel.app'; // Backup URL placeholder
 
         async function fetchWithFailover(endpoint, options = {}) {
             // Ensure endpoint starts with /
             if (!endpoint.startsWith('/')) endpoint = '/' + endpoint;
 
-            // 1. Try Primary (Local/Railway)
-            try {
-                // If endpoint is already relative, fetch will use current origin
-                const response = await fetch(`${RAILWAY_API}${endpoint}`, options);
-                if (response.ok) return response;
-
-                // If response is not ok (e.g., 404, 500), try fallback if it's a critical error
-                if (response.status >= 500) {
-                    console.warn(`Primary API returned ${response.status} for ${endpoint}, trying Vercel...`);
-                } else {
-                    return response; // Return 4xx errors normally
-                }
-            } catch (err) {
-                console.warn(`Primary API connection failed for ${endpoint}, trying Vercel...`);
-            }
-
-            // 2. Try Backup (Vercel)
-            try {
-                // Skip fallback if VERCEL_API is not configured or we are on localhost
-                if (!VERCEL_API || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    throw new Error("Primary API failed and no fallback available for local development.");
-                }
-                const response = await fetch(`${VERCEL_API}${endpoint}`, options);
-                if (response.ok) return response;
-                throw new Error(`Vercel fallback failed with status ${response.status}`);
-            } catch (err) {
-                console.error(`All API endpoints failed for ${endpoint}: ${err.message}`);
-                throw err;
-            }
+            const response = await fetch(`${RAILWAY_API}${endpoint}`, options);
+            return response;
         }
 
         // ============================================================

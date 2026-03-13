@@ -1,8 +1,15 @@
 import os
 import httpx
+from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
+
+# Eagerly load .env at _import time_ so both local dev and Railway work.
+# On Railway the env var is injected by the platform; load_dotenv(override=False)
+# keeps the platform value if it is already set.
+_env_path = os.path.join(os.path.dirname(__file__), '../../.env')
+load_dotenv(dotenv_path=_env_path, override=False)
 
 # Router without prefix so we can define /chat and /oracle
 router = APIRouter(tags=["AI"])
@@ -11,18 +18,12 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 def get_groq_key():
     key = os.getenv("GROQ_API_KEY")
-    if not key:
-        print("GROQ_API_KEY not found in os.getenv, trying load_dotenv...")
-        from dotenv import load_dotenv
-        env_path = os.path.join(os.path.dirname(__file__), '../../.env')
-        load_dotenv(env_path)
-        key = os.getenv("GROQ_API_KEY")
-    
     if key:
         print(f"GROQ_API_KEY found: {key[:6]}...{key[-4:]}")
     else:
-        print("GROQ_API_KEY is completely missing from environment and .env")
+        print("ERROR: GROQ_API_KEY missing — set it in Railway environment variables or .env")
     return key
+
 
 class SimpleChatRequest(BaseModel):
     message: str
