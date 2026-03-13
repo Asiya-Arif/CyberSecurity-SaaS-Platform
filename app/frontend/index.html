@@ -2370,8 +2370,8 @@ RESPONSE FORMAT RULES (follow strictly):
                         </div>
                     </div>
                     
-                    <div class="oracle-analysis-block" style="padding: 15px; line-height: 1.5; margin: 0;">
-                        ${escHtml(reply).trim()
+                    <div class="oracle-analysis-block" style="padding: 0 15px 15px 15px; line-height: 1.5; margin: 0;">
+                        ${escHtml(reply).trim().replace(/^(\n|\r|\s)+/, '')
                         .replace(/\*\*(.*?)\*\*/g, '<span style="color:var(--neon-red); font-weight:700;">$1</span>')
                         .replace(/\[ANALYSIS\]/g, '<div style="color:#ffcc00; font-weight:700; margin-bottom:4px;">[ANALYSIS]</div>')
                         .replace(/\[([A-Z_]+)\]/g, '<div style="color:#ffcc00; font-weight:700; margin-top:14px; margin-bottom:4px;">[$1]</div>')

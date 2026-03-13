@@ -684,17 +684,9 @@ async def upload_logs(file: UploadFile = File(...), db: Session = Depends(get_db
         db_ok = True
         
         try:
-            # Run Heuristic Detection
-            heuristic_incidents = run_detection(db, parsed_events)
-            
-            # Run AI-Enhanced Detection
-            try:
-                ai_incidents = await run_ai_detection(db, parsed_events)
-                all_incidents = heuristic_incidents + ai_incidents
-            except Exception as ai_err:
-                print(f"[upload] AI Detection failed: {ai_err}")
-                all_incidents = heuristic_incidents
-                
+            # Heuristic Detection only — fast, offline, no API quota consumed
+            # Oracle Explain handles deep AI analysis per-incident on demand
+            all_incidents = run_detection(db, parsed_events)
             incidents = len(all_incidents)
         except Exception as e:
             print(f"[upload] detection error: {e}")
@@ -705,13 +697,7 @@ async def upload_logs(file: UploadFile = File(...), db: Session = Depends(get_db
         print(f"[upload] database write unavailable (read-only?): {e}")
         db.rollback()
         # Fallback: compute analytics in-memory for serverless/read-only environments
-        heuristic_incidents = run_detection(db, parsed_events) 
-        try:
-            ai_incidents = await run_ai_detection(db, parsed_events)
-            all_incidents = heuristic_incidents + ai_incidents
-        except Exception as ai_err:
-            print(f"[upload] AI Detection fallback failed: {ai_err}")
-            all_incidents = heuristic_incidents
+        all_incidents = run_detection(db, parsed_events)
 
         analytics = _compute_analytics_from_events(parsed_events, external_incidents=all_incidents)
         return {
